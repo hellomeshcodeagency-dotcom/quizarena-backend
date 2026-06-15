@@ -15,18 +15,19 @@ const { errorHandler, notFound } = require('./middleware/errorHandler');
 const app = express();
 const server = http.createServer(app);
 
+// ── TRUST PROXY (required on Render) ───────────────────────
+app.set('trust proxy', 1);
+
 // ── CORS ORIGIN HELPER ─────────────────────────────────────
 const rawOrigin = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 const allowedOrigins = [
   rawOrigin,
-  rawOrigin + '/',
   'http://localhost:5173',
   'http://localhost:5174',
 ];
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, Render health checks)
     if (!origin) return callback(null, true);
     const clean = origin.replace(/\/$/, '');
     if (allowedOrigins.map(o => o.replace(/\/$/, '')).includes(clean)) {
@@ -50,14 +51,14 @@ const io = new Server(server, {
 // ── MIDDLEWARE ─────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // handle preflight for all routes
+app.options('*', cors(corsOptions));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
