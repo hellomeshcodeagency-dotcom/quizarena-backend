@@ -1,54 +1,38 @@
-const https = require('https')
+const nodemailer = require('nodemailer')
 
 const BASE_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '')
 const APP_NAME = 'BrainBattle'
-const FROM     = process.env.EMAIL_FROM || 'BrainBattle <onboarding@resend.dev>'
 
-// Send via Resend API (works on all hosting, no SMTP ports needed)
 const sendMail = async ({ to, subject, html }) => {
-  const apiKey = process.env.RESEND_API_KEY
+  const user = process.env.EMAIL_USER
+  const pass = process.env.EMAIL_PASS
 
-  if (!apiKey) {
-    console.error('[Email] ❌ RESEND_API_KEY not set in environment')
+  if (!user || !pass) {
+    console.error('[Email] ❌ EMAIL_USER or EMAIL_PASS not set')
     return
   }
 
   console.log(`[Email] Sending "${subject}" to ${to}`)
 
-  const body = JSON.stringify({ from: FROM, to, subject, html })
-
-  return new Promise((resolve) => {
-    const req = https.request(
-      {
-        hostname: 'api.resend.com',
-        path: '/emails',
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        let data = ''
-        res.on('data', chunk => data += chunk)
-        res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            console.log('[Email] ✅ Sent successfully')
-          } else {
-            console.error('[Email] ❌ Failed:', res.statusCode, data)
-          }
-          resolve()
-        })
-      }
-    )
-    req.on('error', err => {
-      console.error('[Email] ❌ Request error:', err.message)
-      resolve()
-    })
-    req.write(body)
-    req.end()
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // TLS on port 587
+    auth: { user, pass },
+    tls: { rejectUnauthorized: false },
   })
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"${APP_NAME}" <${user}>`,
+      to,
+      subject,
+      html,
+    })
+    console.log(`[Email] ✅ Sent! ID: ${info.messageId}`)
+  } catch (err) {
+    console.error('[Email] ❌ Error:', err.message)
+  }
 }
 
 const layout = (content) => `
