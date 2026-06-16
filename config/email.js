@@ -1,45 +1,54 @@
-const nodemailer = require('nodemailer')
+const https = require('https')
 
 const BASE_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '')
 const APP_NAME = 'BrainBattle'
-const SUPPORT  = process.env.EMAIL_USER || 'support@brainbattle.com'
+const FROM     = process.env.EMAIL_FROM || 'BrainBattle <onboarding@resend.dev>'
 
+// Send via Resend API (works on all hosting, no SMTP ports needed)
 const sendMail = async ({ to, subject, html }) => {
-  const user = process.env.EMAIL_USER
-  const pass = process.env.EMAIL_PASS
+  const apiKey = process.env.RESEND_API_KEY
 
-  if (!user || !pass) {
-    console.error('[Email] ❌ EMAIL_USER or EMAIL_PASS not set in environment')
+  if (!apiKey) {
+    console.error('[Email] ❌ RESEND_API_KEY not set in environment')
     return
   }
 
-  console.log(`[Email] Attempting to send "${subject}" to ${to} from ${user}`)
+  console.log(`[Email] Sending "${subject}" to ${to}`)
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: { user, pass },
-  })
+  const body = JSON.stringify({ from: FROM, to, subject, html })
 
-  try {
-    // Verify connection first
-    await transporter.verify()
-    console.log('[Email] ✅ SMTP connection verified')
-
-    const info = await transporter.sendMail({
-      from: `"${APP_NAME}" <${user}>`,
-      to,
-      subject,
-      html,
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: 'api.resend.com',
+        path: '/emails',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let data = ''
+        res.on('data', chunk => data += chunk)
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            console.log('[Email] ✅ Sent successfully')
+          } else {
+            console.error('[Email] ❌ Failed:', res.statusCode, data)
+          }
+          resolve()
+        })
+      }
+    )
+    req.on('error', err => {
+      console.error('[Email] ❌ Request error:', err.message)
+      resolve()
     })
-    console.log(`[Email] ✅ Sent! Message ID: ${info.messageId}`)
-  } catch (err) {
-    console.error('[Email] ❌ Failed to send email:')
-    console.error('[Email] Error code:', err.code)
-    console.error('[Email] Error message:', err.message)
-    if (err.response) console.error('[Email] SMTP response:', err.response)
-  }
+    req.write(body)
+    req.end()
+  })
 }
 
 const layout = (content) => `
@@ -71,8 +80,7 @@ const layout = (content) => `
 <div class="logo">Brain<em>Battle</em></div>
 ${content}
 </div>
-<div class="footer">&copy; ${new Date().getFullYear()} BrainBattle &middot; Nigeria's real-money puzzle platform<br>
-Questions? <a href="mailto:${SUPPORT}" style="color:#6C63FF">${SUPPORT}</a></div>
+<div class="footer">&copy; ${new Date().getFullYear()} BrainBattle &middot; Nigeria's real-money puzzle platform</div>
 </div></body></html>`
 
 const sendWelcome = async ({ to, username, referralCode, coins }) => {
