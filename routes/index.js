@@ -1,6 +1,6 @@
 const express = require('express');
 const { auth, optionalAuth } = require('../middleware/auth');
-const { register, login, me } = require('../controllers/authController');
+const { register, login, me, forgotPassword, resetPassword, changePassword } = require('../controllers/authController');
 const { getWallet, getTransactions, initializeDeposit, verifyDeposit, withdraw, buyCoins } = require('../controllers/walletController');
 const { findMatch, getRoom, getLeaderboard, getUserStats, getCategories } = require('../controllers/gameController');
 const { listTournaments, registerTournament } = require('../controllers/tournamentController');
@@ -15,6 +15,9 @@ router.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date
 router.post('/auth/register', register);
 router.post('/auth/login',    login);
 router.get('/auth/me',        auth, me);
+router.post('/auth/forgot-password', forgotPassword);
+router.post('/auth/reset-password',  resetPassword);
+router.post('/auth/change-password', auth, changePassword);
 
 // ── WALLET ─────────────────────────────────────────────────
 router.get('/wallet',                     auth, getWallet);
