@@ -4,28 +4,41 @@ const BASE_URL = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/
 const APP_NAME = 'BrainBattle'
 const SUPPORT  = process.env.EMAIL_USER || 'support@brainbattle.com'
 
-const getTransporter = () => nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-})
-
 const sendMail = async ({ to, subject, html }) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    console.warn('[Email] EMAIL_USER or EMAIL_PASS not set - skipping:', subject)
+  const user = process.env.EMAIL_USER
+  const pass = process.env.EMAIL_PASS
+
+  if (!user || !pass) {
+    console.error('[Email] ❌ EMAIL_USER or EMAIL_PASS not set in environment')
     return
   }
+
+  console.log(`[Email] Attempting to send "${subject}" to ${to} from ${user}`)
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user, pass },
+  })
+
   try {
-    const transporter = getTransporter()
-    await transporter.sendMail({
-      from: `"${APP_NAME}" <${process.env.EMAIL_USER}>`,
-      to, subject, html,
+    // Verify connection first
+    await transporter.verify()
+    console.log('[Email] ✅ SMTP connection verified')
+
+    const info = await transporter.sendMail({
+      from: `"${APP_NAME}" <${user}>`,
+      to,
+      subject,
+      html,
     })
-    console.log(`[Email] Sent "${subject}" to ${to}`)
+    console.log(`[Email] ✅ Sent! Message ID: ${info.messageId}`)
   } catch (err) {
-    console.error('[Email] Failed:', err.message)
+    console.error('[Email] ❌ Failed to send email:')
+    console.error('[Email] Error code:', err.code)
+    console.error('[Email] Error message:', err.message)
+    if (err.response) console.error('[Email] SMTP response:', err.response)
   }
 }
 
@@ -49,7 +62,8 @@ const layout = (content) => `
   .stat{display:inline-block;background:#1E1E38;border:1px solid #2A2A50;border-radius:10px;padding:12px 20px;margin:6px;text-align:center}
   .sv{font-size:22px;font-weight:800;display:block}
   .sl{font-size:11px;color:#5A5A8A;text-transform:uppercase;letter-spacing:.06em}
-  .gold{color:#FFB800}.teal{color:#00D4AA}.ref{background:#1E1E38;border:1px dashed #6C63FF;border-radius:10px;padding:16px;text-align:center;margin:12px 0 20px}
+  .gold{color:#FFB800}.teal{color:#00D4AA}
+  .ref{background:#1E1E38;border:1px dashed #6C63FF;border-radius:10px;padding:16px;text-align:center;margin:12px 0 20px}
 </style>
 </head>
 <body>
@@ -67,7 +81,7 @@ const sendWelcome = async ({ to, username, referralCode, coins }) => {
     subject: `Welcome to BrainBattle, ${username}! 🎮`,
     html: layout(`
       <h1>Welcome, ${username}! 🎉</h1>
-      <p>You've joined Nigeria's most exciting real-money puzzle and quiz platform. Your account is ready to go.</p>
+      <p>You've joined Nigeria's most exciting real-money puzzle and quiz platform. Your account is ready.</p>
       <div style="text-align:center;margin:20px 0">
         <div class="stat"><span class="sv gold">${coins}</span><span class="sl">Free coins</span></div>
         <div class="stat"><span class="sv teal">5</span><span class="sl">Free practices/day</span></div>
