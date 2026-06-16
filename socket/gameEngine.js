@@ -316,3 +316,89 @@ const endGame = async (io, roomId) => {
 };
 
 module.exports = { setupSocket };
+
+// Export handlers separately for use with unified socket
+const setupQuizHandlers = (io, socket) => {
+  socket.on('join_room', async ({ roomId }) => {
+    try {
+      const roomResult = await query(
+        `SELECT gr.*,
+           ARRAY_AGG(json_build_object('userId', gp.user_id, 'username', u.username)) as players
+         FROM game_rooms gr
+         LEFT JOIN game_players gp ON gp.room_id = gr.id
+         LEFT JOIN users u ON u.id = gp.user_id
+         WHERE gr.id = $1
+         GROUP BY gr.id`,
+        [roomId]
+      );
+      const room = roomResult.rows[0];
+      if (!room) return socket.emit('error', { message: 'Room not found' });
+
+      socket.join(roomId);
+      socket.roomId = roomId;
+
+      io.to(roomId).emit('player_joined', {
+        userId: socket.user.id,
+        username: socket.user.username,
+        players: room.players,
+      });
+
+      if (room.players.filter(p => p.userId).length >= room.max_players) {
+        await startGame(io, roomId, room);
+      }
+    } catch (err) {
+      console.error('[Socket] join_room error:', err);
+      socket.emit('error', { message: 'Failed to join room' });
+    }
+  });
+
+  socket.on('submit_answer', async ({ roomId, questionIndex, answer, responseTimeMs }) => {
+    try {
+      const game = activeGames.get(roomId);
+      if (!game || game.currentQuestionIndex !== questionIndex) return;
+      if (game.answers[questionIndex]?.[socket.user.id]) return;
+
+      const question = game.questions[questionIndex];
+      const isCorrect = answer === question.correct;
+      const timeBonus = Math.max(0, Math.round((QUESTION_TIME * 1000 - responseTimeMs) / 1000 * 85));
+      const points = isCorrect ? 100 + timeBonus : 0;
+
+      if (!game.answers[questionIndex]) game.answers[questionIndex] = {};
+      game.answers[questionIndex][socket.user.id] = { answer, isCorrect, points };
+
+      if (!game.scores[socket.user.id]) game.scores[socket.user.id] = 0;
+      game.scores[socket.user.id] += points;
+
+      socket.emit('answer_result', {
+        questionIndex, isCorrect,
+        correctAnswer: question.correct,
+        points, totalScore: game.scores[socket.user.id],
+      });
+
+      io.to(roomId).emit('score_update', {
+        userId: socket.user.id,
+        username: socket.user.username,
+        score: game.scores[socket.user.id],
+      });
+
+      const answeredCount = Object.keys(game.answers[questionIndex] || {}).length;
+      if (answeredCount >= game.playerCount) {
+        clearTimeout(game.questionTimer);
+        setTimeout(() => advanceQuestion(io, roomId), 800);
+      }
+    } catch (err) {
+      console.error('[Socket] submit_answer error:', err);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.roomId) {
+      io.to(socket.roomId).emit('player_disconnected', {
+        userId: socket.user.id,
+        username: socket.user.username,
+      });
+    }
+  });
+};
+
+setupSocket._setupHandlers = setupQuizHandlers;
