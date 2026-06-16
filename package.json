@@ -1,7 +1,7 @@
 {
   "name": "quizarena-server",
   "version": "1.0.0",
-  "description": "QuizArena backend — Node.js + Express + PostgreSQL + Socket.io",
+  "description": "QuizArena backend \u2014 Node.js + Express + PostgreSQL + Socket.io",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -21,7 +21,8 @@
     "uuid": "^10.0.0",
     "axios": "^1.7.2",
     "helmet": "^7.1.0",
-    "morgan": "^1.10.0"
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.13"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
