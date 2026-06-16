@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 
 const { migrate } = require('./db');
 const routes = require('./routes');
-const { setupSocket } = require('./socket/gameEngine');
+const { setupAllSockets } = require('./socket/index');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
 const app = express();
@@ -82,7 +82,7 @@ app.use(notFound);
 app.use(errorHandler);
 
 // ── SETUP SOCKET ───────────────────────────────────────────
-setupSocket(io);
+setupAllSockets(io);
 
 // ── START ──────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
