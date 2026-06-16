@@ -1,9 +1,8 @@
 const axios = require('axios');
 const { query, getClient } = require('../db');
 
-const PLATFORM_CUT = parseInt(process.env.PLATFORM_CUT_PCT || '10') / 100;
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
-const REFERRAL_COINS = parseInt(process.env.REFERRAL_COINS || '100');
+const REFERRAL_COINS  = parseInt(process.env.REFERRAL_COINS || '100');
 
 // ── GET WALLET ─────────────────────────────────────────────
 const getWallet = async (req, res, next) => {
@@ -38,9 +37,8 @@ const initializeDeposit = async (req, res, next) => {
     if (!amount || amount < 100) {
       return res.status(400).json({ error: 'Minimum deposit is ₦100' });
     }
-
     if (!PAYSTACK_SECRET) {
-      return res.status(500).json({ error: 'Payment gateway not configured. Please contact support.' });
+      return res.status(500).json({ error: 'Payment gateway not configured. Add PAYSTACK_SECRET_KEY in Render environment.' });
     }
 
     const amountKobo = Math.round(amount * 100);
@@ -59,7 +57,10 @@ const initializeDeposit = async (req, res, next) => {
         callback_url: `${clientUrl}/wallet?deposit=success`,
       },
       {
-        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}`, 'Content-Type': 'application/json' },
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET}`,
+          'Content-Type': 'application/json',
+        },
         timeout: 10000,
       }
     );
@@ -76,7 +77,9 @@ const initializeDeposit = async (req, res, next) => {
   } catch (err) {
     if (err.response) {
       console.error('[Paystack] Error:', err.response.data);
-      return res.status(400).json({ error: err.response.data?.message || 'Payment initialization failed' });
+      return res.status(400).json({
+        error: err.response.data?.message || 'Payment initialization failed'
+      });
     }
     next(err);
   }
@@ -87,7 +90,6 @@ const verifyDeposit = async (req, res, next) => {
   const client = await getClient();
   try {
     const { reference } = req.params;
-
     if (!PAYSTACK_SECRET) {
       return res.status(500).json({ error: 'Payment gateway not configured' });
     }
@@ -104,6 +106,7 @@ const verifyDeposit = async (req, res, next) => {
 
     const userId = metadata?.user_id || req.user.id;
 
+    // Check not already processed
     const existing = await query(
       "SELECT status FROM transactions WHERE reference = $1", [reference]
     );
@@ -113,47 +116,72 @@ const verifyDeposit = async (req, res, next) => {
 
     await client.query('BEGIN');
 
-    const bonus = amount >= 500000 ? Math.round(amount * 0.1) : 0;
-    const totalCredit = amount + bonus;
-    const bonusCoins = 50;
-
+    // Credit wallet — no bonus, just the exact amount deposited
     await client.query(
-      'UPDATE wallets SET balance = balance + $1, coins = coins + $2, updated_at = NOW() WHERE user_id = $3',
-      [totalCredit, bonusCoins, userId]
-    );
-    await client.query(
-      "UPDATE transactions SET status = 'completed' WHERE reference = $1", [reference]
+      'UPDATE wallets SET balance = balance + $1, updated_at = NOW() WHERE user_id = $2',
+      [amount, userId]
     );
 
-    if (bonus > 0) {
-      await client.query(
-        `INSERT INTO transactions (user_id, type, amount, currency, status, description)
-         VALUES ($1, 'deposit', $2, 'NGN', 'completed', '10% deposit bonus')`,
-        [userId, bonus]
-      );
-    }
+    // Mark transaction complete
+    await client.query(
+      "UPDATE transactions SET status = 'completed' WHERE reference = $1",
+      [reference]
+    );
 
+    // Check if this user was referred — award referrer coins on first deposit
     const refResult = await client.query(
-      "SELECT * FROM referrals WHERE referred_id = $1 AND status = 'pending'", [userId]
+      "SELECT * FROM referrals WHERE referred_id = $1 AND status = 'pending'",
+      [userId]
     );
     if (refResult.rows[0]) {
       const referral = refResult.rows[0];
-      await client.query('UPDATE wallets SET coins = coins + $1 WHERE user_id = $2', [REFERRAL_COINS, referral.referrer_id]);
-      await client.query('UPDATE wallets SET coins = coins + 50 WHERE user_id = $1', [userId]);
+
+      // Award referrer 100 coins
+      await client.query(
+        'UPDATE wallets SET coins = coins + $1 WHERE user_id = $2',
+        [REFERRAL_COINS, referral.referrer_id]
+      );
+
+      // Award referred user 50 coins for depositing
+      await client.query(
+        'UPDATE wallets SET coins = coins + 50 WHERE user_id = $1',
+        [userId]
+      );
+
+      // Mark referral complete
       await client.query(
         "UPDATE referrals SET status = 'completed', coins_awarded = $1, completed_at = NOW() WHERE id = $2",
         [REFERRAL_COINS, referral.id]
+      );
+
+      // Log coin transactions
+      await client.query(
+        `INSERT INTO transactions (user_id, type, amount, currency, status, description)
+         VALUES ($1, 'referral_coin', $2, 'COINS', 'completed', 'Referral reward — friend deposited')`,
+        [referral.referrer_id, REFERRAL_COINS]
+      );
+      await client.query(
+        `INSERT INTO transactions (user_id, type, amount, currency, status, description)
+         VALUES ($1, 'referral_coin', 50, 'COINS', 'completed', 'Bonus coins for first deposit')`,
+        [userId]
       );
     }
 
     await client.query('COMMIT');
 
-    const walletResult = await query('SELECT balance, coins FROM wallets WHERE user_id = $1', [userId]);
-    res.json({ message: 'Deposit successful', wallet: walletResult.rows[0], bonus, bonusCoins });
+    const walletResult = await query(
+      'SELECT balance, coins FROM wallets WHERE user_id = $1', [userId]
+    );
+    res.json({
+      message: 'Deposit successful',
+      wallet: walletResult.rows[0],
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.response) {
-      return res.status(400).json({ error: err.response.data?.message || 'Verification failed' });
+      return res.status(400).json({
+        error: err.response.data?.message || 'Verification failed'
+      });
     }
     next(err);
   } finally {
@@ -166,14 +194,19 @@ const withdraw = async (req, res, next) => {
   const client = await getClient();
   try {
     const { amount, bankCode, accountNumber, accountName } = req.body;
-    if (!amount || amount < 1000) return res.status(400).json({ error: 'Minimum withdrawal is ₦1,000' });
-    if (!accountNumber) return res.status(400).json({ error: 'Account number is required' });
+    if (!amount || amount < 1000) {
+      return res.status(400).json({ error: 'Minimum withdrawal is ₦1,000' });
+    }
+    if (!accountNumber) {
+      return res.status(400).json({ error: 'Account number is required' });
+    }
 
     const amountKobo = Math.round(amount * 100);
     await client.query('BEGIN');
 
     const walletResult = await client.query(
-      'SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [req.user.id]
+      'SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+      [req.user.id]
     );
     if (!walletResult.rows[0] || walletResult.rows[0].balance < amountKobo) {
       await client.query('ROLLBACK');
@@ -187,8 +220,11 @@ const withdraw = async (req, res, next) => {
     await client.query(
       `INSERT INTO transactions (user_id, type, amount, currency, status, description, metadata)
        VALUES ($1, 'withdrawal', $2, 'NGN', 'pending', $3, $4)`,
-      [req.user.id, amountKobo, `Withdrawal to ${accountName || accountNumber}`,
-       JSON.stringify({ bankCode, accountNumber, accountName })]
+      [
+        req.user.id, amountKobo,
+        `Withdrawal to ${accountName || accountNumber}`,
+        JSON.stringify({ bankCode, accountNumber, accountName }),
+      ]
     );
 
     await client.query('COMMIT');
@@ -214,7 +250,8 @@ const buyCoins = async (req, res, next) => {
     await client.query('BEGIN');
 
     const walletResult = await client.query(
-      'SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE', [req.user.id]
+      'SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE',
+      [req.user.id]
     );
     if (walletResult.rows[0].balance < priceKobo) {
       await client.query('ROLLBACK');
@@ -232,7 +269,9 @@ const buyCoins = async (req, res, next) => {
     );
 
     await client.query('COMMIT');
-    const updated = await query('SELECT balance, coins FROM wallets WHERE user_id = $1', [req.user.id]);
+    const updated = await query(
+      'SELECT balance, coins FROM wallets WHERE user_id = $1', [req.user.id]
+    );
     res.json({ message: `${coins} coins added`, wallet: updated.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -242,4 +281,7 @@ const buyCoins = async (req, res, next) => {
   }
 };
 
-module.exports = { getWallet, getTransactions, initializeDeposit, verifyDeposit, withdraw, buyCoins };
+module.exports = {
+  getWallet, getTransactions, initializeDeposit,
+  verifyDeposit, withdraw, buyCoins,
+};
